@@ -17,4 +17,5 @@ __pycache__/
 results/
 
 # Thesis
-Thesis-Ausarbeitung/
+Thesis-Ausarbeitung/**
+!Thesis-Ausarbeitung/my-thesis.pdf

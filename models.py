@@ -1,33 +1,31 @@
-"""Modelle: MLP (PyTorch) und Random-Forest-Wrapper (sklearn)."""
+"""Modellarchitekturen: MLP und Random Forest."""
 
 import torch.nn as nn
 from sklearn.ensemble import RandomForestClassifier
 
 
 class MLP(nn.Module):
-    """Flexibles MLP mit konfigurierbarer Anzahl Hidden Layers und Aktivierungsfunktion."""
+    """Mehrschichtiges NN mit flexibler Tiefe."""
 
-    def __init__(
-        self,
-        input_dim: int,
-        hidden_dim: int,
-        dropout: float,
-        output_dim: int = 2,
-        num_layers: int = 1,
-        activation: str = "relu",
-    ):
+    def __init__(self, input_dim: int, 
+                 hidden_dim: int, 
+                 num_layers: int,
+                 dropout: float, 
+                 activation: str, 
+                 num_classes: int = 2):
         super().__init__()
 
-        act_fn = nn.ReLU() if activation == "relu" else nn.Tanh()
+        akt = nn.ReLU() if activation == "relu" else nn.Tanh()
 
-        layers = []
-        in_features = input_dim
-        for _ in range(num_layers):
-            layers.append(nn.Linear(in_features, hidden_dim))
-            layers.append(act_fn)
-            layers.append(nn.Dropout(dropout))
-            in_features = hidden_dim
-        layers.append(nn.Linear(in_features, output_dim))
+        # erste layer: input_dim zu hidden_dim
+        layers = [nn.Linear(input_dim, hidden_dim), akt, nn.Dropout(dropout)]
+
+        # alle hidden layers
+        for _ in range(num_layers - 1):
+            layers += [nn.Linear(hidden_dim, hidden_dim), akt, nn.Dropout(dropout)]
+
+        # letzte layer: hidden_dim zu num_classes
+        layers.append(nn.Linear(hidden_dim, num_classes))
 
         self.net = nn.Sequential(*layers)
 
@@ -36,17 +34,24 @@ class MLP(nn.Module):
 
 
 class RFModel:
-    """Wrapper um sklearn RandomForestClassifier mit einheitlichem Interface."""
+    """Wrapper um RandomForestClassifier für einheitliche Schnittstelle."""
 
-    def __init__(self, **kwargs):
-        self.model = RandomForestClassifier(**kwargs)
-
-    def fit(self, X, y):
-        self.model.fit(X, y)
-        return self
-
-    def predict(self, X):
-        return self.model.predict(X)
-
-    def predict_proba(self, X):
-        return self.model.predict_proba(X)
+    def __init__(self, 
+                 n_estimators: int, 
+                 max_depth: int, 
+                 min_samples_split: int,
+                 max_features: str, 
+                 min_samples_leaf: int, 
+                 criterion: str,
+                 max_samples: float):
+        
+        self.model = RandomForestClassifier(
+            n_estimators=n_estimators,
+            max_depth=max_depth,
+            min_samples_split=min_samples_split,
+            max_features=max_features,
+            min_samples_leaf=min_samples_leaf,
+            criterion=criterion,
+            max_samples=max_samples,
+            n_jobs=-1,
+        )

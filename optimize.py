@@ -29,7 +29,7 @@ def _sample(hp: dict, rng) -> float | int | str:
 
 def _priority_order(n: int, weights: np.ndarray, rng) -> np.ndarray:
     """Gibt eine gewichtete zufällige Reihenfolge der HP-Indizes zurück."""
-    keys = rng.random(n) / weights
+    keys = rng.random(n) / (weights + 1e-10) # Teilen durch 0 vermeiden
     return np.argsort(keys)
 
 

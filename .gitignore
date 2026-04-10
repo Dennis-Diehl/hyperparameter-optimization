@@ -15,7 +15,11 @@ __pycache__/
 
 # Project
 results/
+docs/
 
 # Thesis
 Thesis-Ausarbeitung/**
 !Thesis-Ausarbeitung/my-thesis.pdf
+
+# Tests
+tests/

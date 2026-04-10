@@ -1,167 +1,81 @@
-"""Entry Point für den HPO-Benchmark.
+"""Outer-Loop: alle Experimente ausführen und Ergebnisse in CSV speichern."""
 
-Hier läuft alles zusammen: Daten laden, Experimente durchführen
-(2 Modelle × 2 Optimierer × 3 Seeds × 3 Datensätze = 36 Runs), Ergebnisse als CSV speichern
-und alle Plots erzeugen.
-"""
-
+import csv
 import json
 import os
-import platform
-import random
+import time
 
-import numpy as np
-import pandas as pd
-import ray
-import torch
-from sklearn.preprocessing import StandardScaler
-
-from config import N_TRIALS, SEEDS, DATASETS
+from config import SEEDS, DATASETS
 from data import load_data
-from optimize import bayesian_search, hybrid_search
-from plots import (
-    plot_comparison,
-    plot_convergence,
-    plot_cross_dataset_comparison,
-    plot_efficiency,
-    plot_energy,
-    plot_hp_distributions,
-    plot_training_time,
-    plot_search_space_2d,
-    save_summary_csv,
-)
+from optimize import bayesian_search, acrs_search
+from train import eval_test_mlp, eval_test_rf
 
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
+RESULTS_DIR  = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+RESULTS_FILE = os.path.join(RESULTS_DIR, "results.csv")
 
+FIELDNAMES = ["dataset", "seed", "method", "model_type",
+              "val_auroc", "test_auroc", "duration_s", "best_config"]
 
-def set_seed(seed):
-    """Alle relevanten Seeds setzen, damit Experimente reproduzierbar sind."""
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = False
+# 4 Experimente pro Dataset × Seed
+EXPERIMENTS = [
+    ("bo",   "mlp"),
+    ("bo",   "rf"),
+    ("acrs", "mlp"),
+    ("acrs", "rf"),
+]
 
 
-def get_hardware_info():
-    """Hardware- und Software-Infos sammeln — für die Thesis-Dokumentation."""
-    info = {
-        "platform": platform.platform(),
-        "processor": platform.processor(),
-        "python_version": platform.python_version(),
-        "torch_version": torch.__version__,
-        "cuda_available": torch.cuda.is_available(),
+def _run(method: str, model_type: str, data: dict, seed: int) -> dict:
+    """Führt einen einzelnen Run durch und gibt die Ergebnisse als Dict zurück."""
+    t0 = time.time()
+    if method == "bo":
+        best_config, val_auroc = bayesian_search(data, model_type=model_type, seed=seed)
+    else:
+        best_config, val_auroc = acrs_search(data, model_type=model_type, seed=seed)
+    duration = time.time() - t0
+
+    if model_type == "mlp":
+        test_auroc = eval_test_mlp(best_config, data)
+    else:
+        test_auroc = eval_test_rf(best_config, data)
+
+    return {
+        "val_auroc":   round(val_auroc,  4),
+        "test_auroc":  round(test_auroc, 4),
+        "duration_s":  round(duration,   1),
+        "best_config": json.dumps(best_config),
     }
-    if torch.cuda.is_available():
-        info["gpu"] = torch.cuda.get_device_name(0)
-    return info
 
 
 def main():
     os.makedirs(RESULTS_DIR, exist_ok=True)
 
-    # Hardware-Info ausgeben und für später speichern
-    hw_info = get_hardware_info()
-    print("Hardware Info:")
-    for k, v in hw_info.items():
-        print(f"  {k}: {v}")
-    with open(os.path.join(RESULTS_DIR, "hardware_info.json"), "w") as f:
-        json.dump(hw_info, f, indent=2)
+    with open(RESULTS_FILE, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+        writer.writeheader()
 
-    # Konzept-Visualisierung des Suchraums (einmalig, ohne echte Daten)
-    gfx_dir = os.path.join(os.path.dirname(__file__), "Thesis-Ausarbeitung", "gfx")
-    os.makedirs(gfx_dir, exist_ok=True)
-    plot_search_space_2d(gfx_dir)
+        for dataset in DATASETS:
+            for seed in SEEDS:
+                data = load_data(seed=seed, dataset=dataset)
+                print(f"\n=== {dataset} | seed={seed} ===")
 
-    # Ray einmal starten — alle tune.run()-Aufrufe nutzen dieselbe Instanz
-    ray.init(ignore_reinit_error=True)
+                for method, model_type in EXPERIMENTS:
+                    label = f"{method.upper()} {model_type.upper()}"
+                    print(f"  {label} ...", end=" ", flush=True)
 
-    # 4 Kombinationen pro Seed × Datensatz
-    # (model_type, Anzeigename, Such-Funktion, Kurzname für CSV)
-    experimente = [
-        ("mlp", "MLP", bayesian_search, "bo"),
-        ("mlp", "MLP", hybrid_search,   "hybrid"),
-        ("rf",  "RF",  bayesian_search, "bo"),
-        ("rf",  "RF",  hybrid_search,   "hybrid"),
-    ]
+                    result = _run(method, model_type, data, seed)
+                    print(f"val={result['val_auroc']:.4f}  "
+                          f"test={result['test_auroc']:.4f}  "
+                          f"{result['duration_s']:.0f}s")
 
-    alle_zeilen = []
-
-    for dataset_name in DATASETS:
-        print(f"\n{'#'*70}")
-        print(f"  DATENSATZ: {dataset_name}")
-        print(f"{'#'*70}")
-
-        for seed in SEEDS:
-            set_seed(seed)
-            data_np = load_data(seed, dataset=dataset_name)
-
-            # Skalierung — einmal pro Seed, nicht in load_data oder im Wrapper
-            scaler = StandardScaler()
-            X_train_s = scaler.fit_transform(data_np["X_train"])
-            X_val_s   = scaler.transform(data_np["X_val"])
-            X_test_s  = scaler.transform(data_np["X_test"])
-            data_np_scaled = {
-                "X_train": X_train_s, "y_train": data_np["y_train"],
-                "X_val":   X_val_s,   "y_val":   data_np["y_val"],
-                "X_test":  X_test_s,  "y_test":  data_np["y_test"],
-            }
-
-            for model_type, model_name, search_fn, optimizer_name in experimente:
-                print(f"\n{'='*60}")
-                print(f"  Dataset={dataset_name}  Modell={model_name}  "
-                      f"Optimizer={optimizer_name.upper()}  Seed={seed}")
-                print(f"{'='*60}")
-
-                ergebnisse = search_fn(model_type, seed, N_TRIALS, data_np_scaled)
-
-                for trial_nr, zeile in enumerate(ergebnisse, start=1):
-                    zeile.update({
-                        "dataset":   dataset_name,
-                        "model":     model_name,
-                        "optimizer": optimizer_name,
-                        "seed":      seed,
-                        "trial_nr":  trial_nr,
+                    writer.writerow({
+                        "dataset":    dataset,
+                        "seed":       seed,
+                        "method":     method,
+                        "model_type": model_type,
+                        **result,
                     })
-                    alle_zeilen.append(zeile)
-
-    ray.shutdown()
-
-    # Alles in einen DataFrame packen und als CSV rausschreiben
-    df = pd.DataFrame(alle_zeilen)
-    csv_pfad = os.path.join(RESULTS_DIR, "results.csv")
-    df.to_csv(csv_pfad, index=False)
-    print(f"\nErgebnisse gespeichert: {csv_pfad}")
-
-    # Kurze Zusammenfassung im Terminal
-    print("\nVal-AUROC pro Datensatz, Modell und Optimierer (mean ± std über die Seeds):")
-    print(
-        df.groupby(["dataset", "model", "optimizer"])["val_auroc"]
-        .agg(["mean", "std", "max"])
-        .round(4)
-    )
-    print("\nVal-Accuracy pro Datensatz, Modell und Optimierer (mean ± std über die Seeds):")
-    print(
-        df.groupby(["dataset", "model", "optimizer"])["val_accuracy"]
-        .agg(["mean", "std", "max"])
-        .round(4)
-    )
-
-    # Zusammenfassende CSV (ein Eintrag pro Run: bestes AUROC + Accuracy)
-    save_summary_csv(df, RESULTS_DIR)
-
-    # Alle Plots erzeugen
-    print("\nErzeuge Plots...")
-    plot_convergence(df, RESULTS_DIR)
-    plot_comparison(df, RESULTS_DIR)
-    plot_cross_dataset_comparison(df, RESULTS_DIR)
-    plot_training_time(df, RESULTS_DIR)
-    plot_efficiency(df, RESULTS_DIR)
-    plot_energy(df, RESULTS_DIR)
-    plot_hp_distributions(df, RESULTS_DIR)
-    print(f"Plots gespeichert in: {RESULTS_DIR}")
+                    f.flush()  # Zwischenergebnisse sofort schreiben
 
 
 if __name__ == "__main__":

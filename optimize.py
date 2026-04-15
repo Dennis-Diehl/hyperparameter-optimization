@@ -64,14 +64,17 @@ def bayesian_search(data: dict, model_type: str, seed: int) -> dict:
     
     Gibt die beste gefundene Konfiguration und den besten AUROC zurück.
     """
-    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True)
+    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True, log_to_driver=False)
 
     search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
     train_fn = train_mlp if model_type == "mlp" else train_rf
 
     def trainable(config):
-        val_auroc = train_fn(config, data)
-        tune.report({"val_auroc": val_auroc})
+        result = train_fn(config, data)
+        tune.report({"val_auroc": result["val_auroc"], 
+                     "val_accuracy": result["val_accuracy"], 
+                     "train_time": result["train_time"]
+                     })
 
     tuner = tune.Tuner(
         trainable,
@@ -83,16 +86,32 @@ def bayesian_search(data: dict, model_type: str, seed: int) -> dict:
             mode="max",
             max_concurrent_trials=1,  # sequentiell: jeder Trial konditioniert auf alle vorherigen
         ),
+        run_config=tune.RunConfig(verbose=0),
     )
     results = tuner.fit()
     best_result = results.get_best_result(metric="val_auroc", mode="max")
-    return best_result.config, best_result.metrics["val_auroc"]
+
+    # Trial-History aus Ray Tune extrahieren
+    df = results.get_dataframe()
+    trial_history = []
+    for i, row in df.iterrows():
+        config = {col.replace("config/", ""): row[col]
+                  for col in df.columns if col.startswith("config/")}
+        trial_history.append({
+            "trial_nr":     i + 1,
+            "val_auroc":    row["val_auroc"],
+            "val_accuracy": row["val_accuracy"],
+            "train_time":   row["train_time"],
+            "config":       config,
+        })
+
+    return best_result.config, best_result.metrics["val_auroc"], trial_history
 
 
 def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
     """Adaptive Coordinate Random Search (ACRS).
 
-    Gibt die beste gefundene Konfiguration und den besten AUROC zurück.
+    Gibt die beste Konfiguration, den besten AUROC und die Trial-History zurück.
     """
     search_space = MLP_SEARCH_SPACE_ACRS if model_type == "mlp" else RF_SEARCH_SPACE_ACRS
     train_fn = train_mlp if model_type == "mlp" else train_rf
@@ -100,32 +119,56 @@ def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
     hp_names = list(search_space.keys())
     n = len(hp_names)
 
+    trial_history = []
+    trial_nr      = 0
+
+    def _log_trial(config: dict, result: dict):
+        """Hängt einen Trial-Eintrag an die History an."""
+        trial_history.append({
+            "trial_nr":     trial_nr,
+            "val_auroc":    result["val_auroc"],
+            "val_accuracy": result["val_accuracy"],
+            "train_time":   result["train_time"],
+            "config":       config,
+        })
+
     # Initialisierung: zufällige Startkonfiguration
     best_config    = {name: _sample(search_space[name], rng) for name in hp_names}
-    best_auroc     = train_fn(best_config, data)
+    result         = train_fn(best_config, data)
+    trial_nr      += 1
+    best_auroc     = result["val_auroc"]
     weights        = np.full(n, 1 / n)
     current_ranges = {name: search_space[name].copy() for name in hp_names}
+    _log_trial(best_config, result)
 
+    # Hauptschleife: R Runden über alle HPs
     for r in range(ACRS_R):
         deltas = np.zeros(n)
-        permutation  = _priority_order(n, weights, rng)
+        permutation = _priority_order(n, weights, rng)
 
+        # koordinatenweise Optimierung in gewichteter Reihenfolge
         for j in permutation:
-            hp_name  = hp_names[j]
+            hp_name = hp_names[j]
             y_before = best_auroc
 
+            # L Kandidaten für diesen HP samplen und evaluieren
             for l in range(ACRS_L):
                 candidate = best_config.copy()
                 candidate[hp_name] = _sample(current_ranges[hp_name], rng)
-                y = train_fn(candidate, data)
+                result = train_fn(candidate, data)
+                y = result["val_auroc"]
+                trial_nr += 1
+                _log_trial(candidate, result)
+
                 if y > best_auroc:
-                    best_auroc  = y
+                    best_auroc = y
                     best_config = candidate
 
             deltas[j] = best_auroc - y_before
             current_ranges[hp_name] = _shrink(current_ranges[hp_name], best_config[hp_name], ACRS_ALPHA)
 
+        # Gewichte für nächste Runde aktualisieren
         total = deltas.sum()
         weights = deltas / total if total > 0 else np.full(n, 1 / n)
 
-    return best_config, best_auroc
+    return best_config, best_auroc, trial_history

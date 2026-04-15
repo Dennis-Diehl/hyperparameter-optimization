@@ -1,5 +1,7 @@
 """Trainingsloops für MLP und Random Forest."""
 
+import time
+
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -18,8 +20,9 @@ def _make_loader(X, y, batch_size: int, shuffle: bool) -> DataLoader:
     return DataLoader(ds, batch_size=batch_size, shuffle=shuffle)
 
 
-def train_mlp(config: dict, data: dict) -> float:
-    """Trainiert ein MLP und gibt die beste Validation AUROC zurück."""
+def train_mlp(config: dict, data: dict) -> dict:
+    """Trainiert ein MLP und gibt AUROC, Accuracy und Trainingszeit zurück."""
+    t0 = time.time()
     batch_size = config["batch_size"]
     train_loader = _make_loader(data["X_train"], data["y_train"], batch_size, shuffle=True)
     val_loader   = _make_loader(data["X_val"],   data["y_val"],   batch_size, shuffle=False)
@@ -57,26 +60,36 @@ def train_mlp(config: dict, data: dict) -> float:
         # Validation: Wahrscheinlichkeit für Klasse 1 berechnen
         model.eval()
         probs = []
+        preds = []
         with torch.no_grad():
             for X_batch, _ in val_loader:
-                prob = torch.softmax(model(X_batch), dim=1)[:, 1]
+                logits = model(X_batch)
+                prob = torch.softmax(logits, dim=1)[:, 1]
                 probs.append(prob.numpy())
-        val_auroc = roc_auc_score(data["y_val"], np.concatenate(probs))
+                preds.append(logits.argmax(dim=1).numpy())
+        val_auroc    = roc_auc_score(data["y_val"], np.concatenate(probs))
+        val_accuracy = (np.concatenate(preds) == data["y_val"]).mean()
 
         # Early Stopping
         if val_auroc > best_val_auroc:
-            best_val_auroc = val_auroc
+            best_val_auroc    = val_auroc
+            best_val_accuracy = val_accuracy
             epochs_without_improvement = 0
         else:
             epochs_without_improvement += 1
             if epochs_without_improvement >= EARLY_STOPPING_PATIENCE:
                 break
 
-    return best_val_auroc
+    return {
+        "val_auroc":    float(best_val_auroc),
+        "val_accuracy": float(best_val_accuracy),
+        "train_time":   time.time() - t0,
+    }
 
 
-def train_rf(config: dict, data: dict) -> float:
-    """Trainiert einen Random Forest und gibt die Validation AUROC zurück."""
+def train_rf(config: dict, data: dict) -> dict:
+    """Trainiert einen Random Forest und gibt AUROC, Accuracy und Trainingszeit zurück."""
+    t0 = time.time()
     model = RFModel(
         n_estimators=config["n_estimators"],
         max_depth=config["max_depth"],
@@ -87,8 +100,13 @@ def train_rf(config: dict, data: dict) -> float:
         max_samples=config["max_samples"],
     )
     model.model.fit(data["X_train"], data["y_train"])
-    probs = model.model.predict_proba(data["X_val"])[:, 1]  # Wahrscheinlichkeit für Klasse 1
-    return roc_auc_score(data["y_val"], probs)
+    probs = model.model.predict_proba(data["X_val"])[:, 1]
+    preds = model.model.predict(data["X_val"])
+    return {
+        "val_auroc":    float(roc_auc_score(data["y_val"], probs)),
+        "val_accuracy": float((preds == data["y_val"]).mean()),
+        "train_time":   time.time() - t0,
+    }
 
 
 def eval_test_mlp(config: dict, data: dict) -> float:
@@ -152,15 +170,20 @@ def eval_test_mlp(config: dict, data: dict) -> float:
     model.load_state_dict(best_state)
     model.eval()
     probs = []
+    preds = []
     with torch.no_grad():
         for X_batch, _ in test_loader:
-            prob = torch.softmax(model(X_batch), dim=1)[:, 1]
-            probs.append(prob.numpy())
-    return roc_auc_score(data["y_test"], np.concatenate(probs))
+            logits = model(X_batch)
+            probs.append(torch.softmax(logits, dim=1)[:, 1].numpy())
+            preds.append(logits.argmax(dim=1).numpy())
+    return {
+        "test_auroc":    float(roc_auc_score(data["y_test"], np.concatenate(probs))),
+        "test_accuracy": float((np.concatenate(preds) == data["y_test"]).mean()),
+    }
 
 
-def eval_test_rf(config: dict, data: dict) -> float:
-    """Trainiert RF mit gegebener Konfiguration und gibt Test-AUROC zurück."""
+def eval_test_rf(config: dict, data: dict) -> dict:
+    """Trainiert RF mit gegebener Konfiguration und gibt Test-AUROC und Test-Accuracy zurück."""
     model = RFModel(
         n_estimators=config["n_estimators"],
         max_depth=config["max_depth"],
@@ -172,4 +195,8 @@ def eval_test_rf(config: dict, data: dict) -> float:
     )
     model.model.fit(data["X_train"], data["y_train"])
     probs = model.model.predict_proba(data["X_test"])[:, 1]
-    return roc_auc_score(data["y_test"], probs)
+    preds = model.model.predict(data["X_test"])
+    return {
+        "test_auroc":    float(roc_auc_score(data["y_test"], probs)),
+        "test_accuracy": float((preds == data["y_test"]).mean()),
+    }

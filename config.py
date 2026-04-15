@@ -17,7 +17,7 @@ N_TRIALS = 110  # Trials pro BO-Run
 # ACRS-Budget
 ACRS_R     = 3
 ACRS_L     = 5
-ACRS_ALPHA = 0.5  # erstmal nicht genutzt
+ACRS_ALPHA = 1.0
 
 # Suchraum MLP für BO (Ray-Tune-Format)
 MLP_SEARCH_SPACE = {

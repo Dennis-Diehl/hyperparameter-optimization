@@ -1,126 +1,111 @@
-"""Outer-Loop: alle Experimente ausführen und Ergebnisse in CSV speichern."""
+"""Startet alle Experimente parallel und führt Ergebnisse zusammen."""
 
+import argparse
 import csv
-import json
+import glob
 import os
-import time
-
-from codecarbon import EmissionsTracker
+import shutil
+import subprocess
+import sys
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from config import SEEDS, DATASETS
-from data import load_data
-from optimize import bayesian_search, acrs_search
-from train import eval_test_mlp, eval_test_rf
 
-RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
-RUNS_FILE   = os.path.join(RESULTS_DIR, "runs.csv")
-TRIALS_FILE = os.path.join(RESULTS_DIR, "trials.csv")
-
-RUNS_FIELDNAMES = ["dataset", "seed", "method", "model_type",
-                   "val_auroc", "val_accuracy", "test_auroc", "test_accuracy",
-                   "duration_s", "energy_kwh", "best_config"]
-
-TRIALS_FIELDNAMES = ["trial_nr", "dataset", "model", "optimizer", "seed",
-                     "val_auroc", "val_accuracy", "train_time", "config"]
-
-# 4 Experimente pro Dataset × Seed
 EXPERIMENTS = [
     ("bo",   "mlp"),
     ("bo",   "rf"),
     ("acrs", "mlp"),
     ("acrs", "rf"),
 ]
+MAX_WORKERS = 4
+
+_HERE       = os.path.dirname(os.path.abspath(__file__))
+RESULTS_DIR = os.path.join(_HERE, "results")
+PARTIAL_DIR = os.path.join(RESULTS_DIR, "partial")
+RUNS_FILE   = os.path.join(RESULTS_DIR, "runs.csv")
+TRIALS_FILE = os.path.join(RESULTS_DIR, "trials.csv")
+
+RUNS_FIELDNAMES   = ["dataset", "seed", "method", "model_type",
+                     "val_auroc", "val_accuracy", "test_auroc", "test_accuracy",
+                     "duration_s", "energy_kwh", "best_config"]
+TRIALS_FIELDNAMES = ["trial_nr", "dataset", "model", "optimizer", "seed",
+                     "val_auroc", "val_accuracy", "train_time", "config"]
 
 
-def _run(method: str, model_type: str, data: dict, seed: int) -> dict:
-    """Führt einen einzelnen Run durch und gibt die Ergebnisse als Dict zurück."""
-    tracker = EmissionsTracker(save_to_file=False, logging_logger=None)
-    tracker.start()
-    t0 = time.time()
-
-    if method == "bo":
-        best_config, val_auroc, trial_history = bayesian_search(data, model_type=model_type, seed=seed)
-    else:
-        best_config, val_auroc, trial_history = acrs_search(data, model_type=model_type, seed=seed)
-
-    duration   = time.time() - t0
-    tracker.stop()
-    energy_kwh = tracker._total_energy.kWh
-
-    if model_type == "mlp":
-        test_result = eval_test_mlp(best_config, data)
-    else:
-        test_result = eval_test_rf(best_config, data)
-    test_auroc    = test_result["test_auroc"]
-    test_accuracy = test_result["test_accuracy"]
-
-    best_trial   = max(trial_history, key=lambda t: t["val_auroc"])
-    val_accuracy = best_trial["val_accuracy"]
-
-    return {
-        "val_auroc":     round(float(val_auroc),    4),
-        "val_accuracy":  round(float(val_accuracy), 4),
-        "test_auroc":    round(float(test_auroc),   4),
-        "test_accuracy": round(float(test_accuracy), 4),
-        "duration_s":    round(duration,     1),
-        "energy_kwh":    round(energy_kwh,   6),
-        "best_config":   json.dumps(best_config),
-        "trial_history": trial_history,
-    }
+def _run_subprocess(args: tuple) -> tuple:
+    """Startet run_single.py als Subprozess für eine Kombination."""
+    dataset, model_type, method, seed = args
+    subprocess.run(
+        [sys.executable, os.path.join(_HERE, "run_single.py"),
+         "--dataset",   dataset,
+         "--model",     model_type,
+         "--optimizer", method,
+         "--seed",      str(seed)],
+        check=True,
+    )
+    return (dataset, model_type, method, seed)
 
 
-def main():
-    os.makedirs(RESULTS_DIR, exist_ok=True)
+def merge_results():
+    """Führt alle Partial-CSVs zu runs.csv und trials.csv zusammen."""
+    runs_files   = sorted(glob.glob(os.path.join(PARTIAL_DIR, "runs_*.csv")))
+    trials_files = sorted(glob.glob(os.path.join(PARTIAL_DIR, "trials_*.csv")))
 
-    with open(RUNS_FILE, "w", newline="") as runs_f, \
-         open(TRIALS_FILE, "w", newline="") as trials_f:
+    with open(RUNS_FILE, "w", newline="") as out:
+        writer = csv.DictWriter(out, fieldnames=RUNS_FIELDNAMES)
+        writer.writeheader()
+        for f in runs_files:
+            with open(f) as inp:
+                for row in csv.DictReader(inp):
+                    writer.writerow(row)
 
-        runs_writer   = csv.DictWriter(runs_f,   fieldnames=RUNS_FIELDNAMES)
-        trials_writer = csv.DictWriter(trials_f, fieldnames=TRIALS_FIELDNAMES)
-        runs_writer.writeheader()
-        trials_writer.writeheader()
+    with open(TRIALS_FILE, "w", newline="") as out:
+        writer = csv.DictWriter(out, fieldnames=TRIALS_FIELDNAMES)
+        writer.writeheader()
+        for f in trials_files:
+            with open(f) as inp:
+                for row in csv.DictReader(inp):
+                    writer.writerow(row)
 
-        for dataset in DATASETS:
-            for seed in SEEDS:
-                data = load_data(seed=seed, dataset=dataset)
-                print(f"\n=== {dataset} | seed={seed} ===")
+    print(f"\n{len(runs_files)} Runs zusammengeführt → runs.csv + trials.csv")
+    shutil.rmtree(PARTIAL_DIR)
+    print("partial/ gelöscht.")
 
-                for method, model_type in EXPERIMENTS:
-                    label = f"{method.upper()} {model_type.upper()}"
-                    print(f"  {label} ...", end=" ", flush=True)
 
-                    result = _run(method, model_type, data, seed)
-                    trial_history = result.pop("trial_history")
+def run_all():
+    """Startet alle Kombinationen parallel."""
+    combinations = [
+        (dataset, model_type, method, seed)
+        for dataset        in DATASETS
+        for seed           in SEEDS
+        for method, model_type in EXPERIMENTS
+    ]
+    total = len(combinations)
+    print(f"Starte {total} Runs mit {MAX_WORKERS} parallelen Prozessen...\n")
+    os.makedirs(PARTIAL_DIR, exist_ok=True)
 
-                    print(f"val={result['val_auroc']:.4f}  "
-                          f"test={result['test_auroc']:.4f}  "
-                          f"{result['duration_s']:.0f}s")
+    completed = 0
+    with ProcessPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        futures = {executor.submit(_run_subprocess, c): c for c in combinations}
+        for future in as_completed(futures):
+            dataset, model_type, method, seed = future.result()
+            completed += 1
+            print(f"[{completed}/{total}] fertig | {dataset} {model_type} {method} seed={seed}")
 
-                    # Zeile in runs.csv schreiben
-                    runs_writer.writerow({
-                        "dataset":    dataset,
-                        "seed":       seed,
-                        "method":     method,
-                        "model_type": model_type,
-                        **result,
-                    })
-                    runs_f.flush()
-
-                    # Zeilen in trials.csv schreiben
-                    for trial in trial_history:
-                        trials_writer.writerow({
-                            "trial_nr":    trial["trial_nr"],
-                            "dataset":     dataset,
-                            "model":       model_type,
-                            "optimizer":   method,
-                            "seed":        seed,
-                            "val_auroc":   trial["val_auroc"],
-                            "val_accuracy": trial["val_accuracy"],
-                            "train_time":  trial["train_time"],
-                            "config":      json.dumps(trial["config"]),
-                        })
-                    trials_f.flush()
+    merge_results()
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--dataset",   type=str)
+    parser.add_argument("--model",     type=str)
+    parser.add_argument("--optimizer", type=str)
+    parser.add_argument("--seed",      type=int)
+    args = parser.parse_args()
+
+    if args.dataset:
+        from run_single import run_single
+        run_single(args.dataset, args.model, args.optimizer, args.seed)
+        merge_results()
+    else:
+        run_all()

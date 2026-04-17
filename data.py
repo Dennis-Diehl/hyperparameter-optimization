@@ -23,8 +23,23 @@ def load_data(seed: int, dataset: str = "breast_cancer") -> dict:
 
     elif dataset == "bank_marketing":
         X, y = fetch_openml(name="bank-marketing", version=1, as_frame=True, return_X_y=True)
-        X = pd.get_dummies(X).values.astype(np.float32)  # kategorische Features expandieren
+        X = pd.get_dummies(X).fillna(0).values.astype(np.float32)
         y = (y.astype(int) == 2).astype(int).values  # 2="yes" → 1
+
+        # auf 10% subsamplen
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(len(X), size=len(X) // 10, replace=False)
+        X, y = X[idx], y[idx]
+
+    elif dataset == "german_credit":
+        X, y = fetch_openml(name="credit-g", version=1, as_frame=True, return_X_y=True)
+        X = pd.get_dummies(X).fillna(0).values.astype(np.float32)
+        y = (y == "good").astype(int).values  # "good" → 1
+
+    elif dataset == "adult_income":
+        X, y = fetch_openml(name="adult", version=2, as_frame=True, return_X_y=True)
+        X = pd.get_dummies(X).fillna(0).values.astype(np.float32)
+        y = (y.astype(str) == ">50K").astype(int).values  # ">50K" → 1
 
         # auf 10% subsamplen
         rng = np.random.default_rng(seed)

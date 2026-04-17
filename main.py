@@ -12,12 +12,16 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from config import SEEDS, DATASETS
 
 EXPERIMENTS = [
-    ("bo",   "mlp"),
-    ("bo",   "rf"),
-    ("acrs", "mlp"),
-    ("acrs", "rf"),
+    ("bo",    "mlp"),
+    ("bo",    "rf"),
+    ("acrs",  "mlp"),
+    ("acrs",  "rf"),
+    ("rs",    "mlp"),
+    ("rs",    "rf"),
+    ("cmaes", "mlp"),
+    ("cmaes", "rf"),
 ]
-MAX_WORKERS = 4
+MAX_WORKERS = 6
 
 _HERE       = os.path.dirname(os.path.abspath(__file__))
 RESULTS_DIR = os.path.join(_HERE, "results")

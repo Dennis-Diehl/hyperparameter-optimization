@@ -5,14 +5,20 @@ import numpy as np
 import ray
 from ray import tune
 from ray.tune.search.optuna import OptunaSearch
+from ray.tune.search.basic_variant import BasicVariantGenerator
 
-from config import (N_TRIALS, ACRS_R, ACRS_L, ACRS_ALPHA,
+from config import (N_TRIALS_MLP, N_TRIALS_RF, ACRS_R, ACRS_L, ACRS_ALPHA,
                     MLP_SEARCH_SPACE, RF_SEARCH_SPACE,
                     MLP_SEARCH_SPACE_ACRS, RF_SEARCH_SPACE_ACRS)
 from train import train_mlp, train_rf
 
 # Projektverzeichnis für Ray-Worker sichtbar machen
 _PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _budget(model_type: str) -> int:
+    """Gibt das Trial-Budget für das jeweilige Modell zurück."""
+    return N_TRIALS_MLP if model_type == "mlp" else N_TRIALS_RF
 
 
 def _sample(hp: dict, rng) -> float | int | str:
@@ -81,7 +87,7 @@ def bayesian_search(data: dict, model_type: str, seed: int) -> dict:
         param_space=search_space,
         tune_config=tune.TuneConfig(
             search_alg=OptunaSearch(metric="val_auroc", mode="max", seed=seed),
-            num_samples=N_TRIALS,
+            num_samples=_budget(model_type),
             metric="val_auroc",
             mode="max",
             max_concurrent_trials=1,  # sequentiell: jeder Trial konditioniert auf alle vorherigen
@@ -93,6 +99,104 @@ def bayesian_search(data: dict, model_type: str, seed: int) -> dict:
     best_result = results.get_best_result(metric="val_auroc", mode="max")
 
     # Trial-History aus Ray Tune extrahieren
+    df = results.get_dataframe()
+    trial_history = []
+    for i, row in df.iterrows():
+        config = {col.replace("config/", ""): row[col]
+                  for col in df.columns if col.startswith("config/")}
+        trial_history.append({
+            "trial_nr":     i + 1,
+            "val_auroc":    row["val_auroc"],
+            "val_accuracy": row["val_accuracy"],
+            "train_time":   row["train_time"],
+            "config":       config,
+        })
+
+    return best_result.config, best_result.metrics["val_auroc"], trial_history
+
+
+def random_search(data: dict, model_type: str, seed: int) -> tuple:
+    """Random Search via Ray Tune.
+
+    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
+    """
+    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True, log_to_driver=False)
+
+    search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
+    train_fn = train_mlp if model_type == "mlp" else train_rf
+
+    def trainable(config):
+        result = train_fn(config, data)
+        tune.report({"val_auroc": result["val_auroc"],
+                     "val_accuracy": result["val_accuracy"],
+                     "train_time": result["train_time"]})
+
+    tuner = tune.Tuner(
+        trainable,
+        param_space=search_space,
+        tune_config=tune.TuneConfig(
+            search_alg=BasicVariantGenerator(random_state=seed),
+            num_samples=_budget(model_type),
+            metric="val_auroc",
+            mode="max",
+            trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}",
+        ),
+        run_config=tune.RunConfig(verbose=0),
+    )
+    results = tuner.fit()
+    best_result = results.get_best_result(metric="val_auroc", mode="max")
+
+    df = results.get_dataframe()
+    trial_history = []
+    for i, row in df.iterrows():
+        config = {col.replace("config/", ""): row[col]
+                  for col in df.columns if col.startswith("config/")}
+        trial_history.append({
+            "trial_nr":     i + 1,
+            "val_auroc":    row["val_auroc"],
+            "val_accuracy": row["val_accuracy"],
+            "train_time":   row["train_time"],
+            "config":       config,
+        })
+
+    return best_result.config, best_result.metrics["val_auroc"], trial_history
+
+
+def cmaes_search(data: dict, model_type: str, seed: int) -> tuple:
+    """CMA-ES via Optuna und Ray Tune.
+
+    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
+    """
+    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True, log_to_driver=False)
+
+    search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
+    train_fn = train_mlp if model_type == "mlp" else train_rf
+
+    def trainable(config):
+        result = train_fn(config, data)
+        tune.report({"val_auroc": result["val_auroc"],
+                     "val_accuracy": result["val_accuracy"],
+                     "train_time": result["train_time"]})
+
+    import optuna
+    sampler = optuna.samplers.CmaEsSampler(seed=seed)
+
+    tuner = tune.Tuner(
+        trainable,
+        param_space=search_space,
+        tune_config=tune.TuneConfig(
+            search_alg=OptunaSearch(sampler=sampler, metric="val_auroc", mode="max"),
+            num_samples=_budget(model_type),
+            metric="val_auroc",
+            mode="max",
+            max_concurrent_trials=1,
+            trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}",
+        ),
+        run_config=tune.RunConfig(verbose=0),
+    )
+    results = tuner.fit()
+    best_result = results.get_best_result(metric="val_auroc", mode="max")
+
     df = results.get_dataframe()
     trial_history = []
     for i, row in df.iterrows():
@@ -143,7 +247,7 @@ def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
     _log_trial(best_config, result)
 
     # Hauptschleife: R Runden über alle HPs
-    for r in range(ACRS_R):
+    for _ in range(ACRS_R):
         deltas = np.zeros(n)
         permutation = _priority_order(n, weights, rng)
 
@@ -153,7 +257,7 @@ def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
             y_before = best_auroc
 
             # L Kandidaten für diesen HP samplen und evaluieren
-            for l in range(ACRS_L):
+            for _ in range(ACRS_L):
                 candidate = best_config.copy()
                 candidate[hp_name] = _sample(current_ranges[hp_name], rng)
                 result = train_fn(candidate, data)

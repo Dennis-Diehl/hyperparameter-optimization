@@ -9,7 +9,7 @@ import time
 from codecarbon import EmissionsTracker
 
 from data import load_data
-from optimize import bayesian_search, acrs_search
+from optimize import bayesian_search, acrs_search, random_search, cmaes_search
 from train import eval_test_mlp, eval_test_rf
 
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
@@ -31,6 +31,10 @@ def _run(method: str, model_type: str, data: dict, seed: int) -> dict:
 
     if method == "bo":
         best_config, val_auroc, trial_history = bayesian_search(data, model_type=model_type, seed=seed)
+    elif method == "rs":
+        best_config, val_auroc, trial_history = random_search(data, model_type=model_type, seed=seed)
+    elif method == "cmaes":
+        best_config, val_auroc, trial_history = cmaes_search(data, model_type=model_type, seed=seed)
     else:
         best_config, val_auroc, trial_history = acrs_search(data, model_type=model_type, seed=seed)
 

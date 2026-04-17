@@ -2,8 +2,8 @@
 
 from ray import tune
 
-SEEDS    = [42, 123, 456]
-DATASETS = ["breast_cancer", "diabetes", "bank_marketing"]
+SEEDS    = [42, 123, 456, 789, 1234, 2345, 3456, 4567, 5678, 6789]
+DATASETS = ["breast_cancer", "diabetes", "bank_marketing", "german_credit", "adult_income"]
 
 # Daten-Split: 60/20/20 
 TEST_SIZE = 0.2   # 20% für Testen, 80% für Training + Validierung
@@ -12,14 +12,12 @@ VAL_SIZE  = 0.25  # von den 80% Trainingsdaten für Validierung
 MAX_EPOCHS              = 100
 EARLY_STOPPING_PATIENCE = 10
 
-N_TRIALS = 110  # Trials pro BO-Run 
-
 # ACRS-Budget
 ACRS_R     = 3
 ACRS_L     = 5
 ACRS_ALPHA = 1.0
 
-# Suchraum MLP für BO (Ray-Tune-Format)
+# Suchraum MLP im Ray-Tune-Format
 MLP_SEARCH_SPACE = {
     "learning_rate":  tune.loguniform(1e-5, 1e-1),
     "batch_size":     tune.choice([16, 32, 64, 128]),
@@ -43,7 +41,7 @@ MLP_SEARCH_SPACE_ACRS = {
     "activation":     {"type": "categorical", "choices": ["relu", "tanh"]},
 }
 
-# Suchraum Random Forest für BO (Ray-Tune-Format)
+# Suchraum Random Forest im Ray-Tune-Format
 RF_SEARCH_SPACE = {
     "n_estimators":      tune.randint(50, 501),
     "max_depth":         tune.randint(3, 31),
@@ -64,3 +62,7 @@ RF_SEARCH_SPACE_ACRS = {
     "criterion":         {"type": "categorical", "choices": ["gini", "entropy"]},
     "max_samples":       {"type": "float",       "low": 0.5, "high": 1.0},
 }
+
+# Trial-Budget: entspricht dem ACRS-Budget (1 + R·n·L) pro Modell
+N_TRIALS_MLP = 1 + ACRS_R * len(MLP_SEARCH_SPACE_ACRS) * ACRS_L  # 121
+N_TRIALS_RF  = 1 + ACRS_R * len(RF_SEARCH_SPACE_ACRS)  * ACRS_L  # 106

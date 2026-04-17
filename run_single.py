@@ -25,7 +25,7 @@ TRIALS_FIELDNAMES = ["trial_nr", "dataset", "model", "optimizer", "seed",
 
 def _run(method: str, model_type: str, data: dict, seed: int) -> dict:
     """Führt einen einzelnen Run durch und gibt die Ergebnisse als Dict zurück."""
-    tracker = EmissionsTracker(save_to_file=False, logging_logger=None)
+    tracker = EmissionsTracker(save_to_file=False, logging_logger=None, log_level="error")
     tracker.start()
     t0 = time.time()
 

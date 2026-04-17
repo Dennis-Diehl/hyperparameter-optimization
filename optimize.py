@@ -85,6 +85,7 @@ def bayesian_search(data: dict, model_type: str, seed: int) -> dict:
             metric="val_auroc",
             mode="max",
             max_concurrent_trials=1,  # sequentiell: jeder Trial konditioniert auf alle vorherigen
+            trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}"
         ),
         run_config=tune.RunConfig(verbose=0),
     )

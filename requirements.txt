@@ -1,6 +1,5 @@
 torch==2.10.0
 scikit-learn==1.8.0
-ray[tune]==2.53.0
 optuna==4.7.0
 codecarbon==3.2.2
 pandas==3.0.0

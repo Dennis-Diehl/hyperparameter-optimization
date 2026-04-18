@@ -1,7 +1,5 @@
 """Konstanten, Suchräume und Seeds für den HPO-Benchmark."""
 
-from ray import tune
-
 SEEDS    = [42, 123, 456, 789, 1234, 2345, 3456, 4567, 5678, 6789]
 DATASETS = ["breast_cancer", "diabetes", "bank_marketing", "german_credit", "adult_income"]
 
@@ -17,22 +15,10 @@ ACRS_R     = 3
 ACRS_L     = 5
 ACRS_ALPHA = 1.0
 
-# Suchraum MLP im Ray-Tune-Format
+# Suchraum MLP
 MLP_SEARCH_SPACE = {
-    "learning_rate":  tune.loguniform(1e-5, 1e-1),
-    "batch_size":     tune.choice([16, 32, 64, 128]),
-    "hidden_dim":     tune.randint(32, 257),
-    "dropout":        tune.uniform(0.0, 0.5),
-    "num_layers":     tune.choice([1, 2, 3]),
-    "optimizer_name": tune.choice(["adam", "sgd", "adamw"]),
-    "weight_decay":   tune.loguniform(1e-6, 1e-2),
-    "activation":     tune.choice(["relu", "tanh"]),
-}
-
-# Suchraum MLP für ACRS
-MLP_SEARCH_SPACE_ACRS = {
     "learning_rate":  {"type": "log",        "low": 1e-5,  "high": 1e-1},
-    "batch_size":     {"type": "categorical", "choices": [16, 32, 64, 128]},
+    "batch_size_exp": {"type": "int",        "low": 4,    "high": 7},  # nur Exponent, damit Batch Size kontinuierlich ist
     "hidden_dim":     {"type": "int",         "low": 32,    "high": 256},
     "dropout":        {"type": "float",       "low": 0.0,   "high": 0.5},
     "num_layers":     {"type": "categorical", "choices": [1, 2, 3]},
@@ -41,19 +27,8 @@ MLP_SEARCH_SPACE_ACRS = {
     "activation":     {"type": "categorical", "choices": ["relu", "tanh"]},
 }
 
-# Suchraum Random Forest im Ray-Tune-Format
+# Suchraum Random Forest
 RF_SEARCH_SPACE = {
-    "n_estimators":      tune.randint(50, 501),
-    "max_depth":         tune.randint(3, 31),
-    "min_samples_split": tune.randint(2, 21),
-    "max_features":      tune.choice(["sqrt", "log2"]),
-    "min_samples_leaf":  tune.randint(1, 11),
-    "criterion":         tune.choice(["gini", "entropy"]),
-    "max_samples":       tune.uniform(0.5, 1.0),
-}
-
-# Suchraum Random Forest für ACRS
-RF_SEARCH_SPACE_ACRS = {
     "n_estimators":      {"type": "int",         "low": 50,  "high": 500},
     "max_depth":         {"type": "int",         "low": 3,   "high": 30},
     "min_samples_split": {"type": "int",         "low": 2,   "high": 20},
@@ -63,6 +38,20 @@ RF_SEARCH_SPACE_ACRS = {
     "max_samples":       {"type": "float",       "low": 0.5, "high": 1.0},
 }
 
+# Alle Experimente: Kombinationen aus Optimierungsmethode und Modelltyp
+EXPERIMENTS = [
+    ("bo",          "mlp"),
+    ("bo",          "rf"),
+    ("acrs",        "mlp"),
+    ("acrs",        "rf"),
+    ("acrs_normal", "mlp"),
+    ("acrs_normal", "rf"),
+    ("rs",          "mlp"),
+    ("rs",          "rf"),
+    ("cmaes",       "mlp"),
+    ("cmaes",       "rf"),
+]
+
 # Trial-Budget: entspricht dem ACRS-Budget (1 + R·n·L) pro Modell
-N_TRIALS_MLP = 1 + ACRS_R * len(MLP_SEARCH_SPACE_ACRS) * ACRS_L  # 121
-N_TRIALS_RF  = 1 + ACRS_R * len(RF_SEARCH_SPACE_ACRS)  * ACRS_L  # 106
+N_TRIALS_MLP = 1 + ACRS_R * len(MLP_SEARCH_SPACE) * ACRS_L  # 121
+N_TRIALS_RF  = 1 + ACRS_R * len(RF_SEARCH_SPACE)  * ACRS_L  # 106

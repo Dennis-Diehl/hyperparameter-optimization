@@ -23,7 +23,7 @@ def _make_loader(X, y, batch_size: int, shuffle: bool) -> DataLoader:
 def train_mlp(config: dict, data: dict) -> dict:
     """Trainiert ein MLP und gibt AUROC, Accuracy und Trainingszeit zurück."""
     t0 = time.time()
-    batch_size = config["batch_size"]
+    batch_size = 2 ** int(config["batch_size_exp"])
     train_loader = _make_loader(data["X_train"], data["y_train"], batch_size, shuffle=True)
     val_loader   = _make_loader(data["X_val"],   data["y_val"],   batch_size, shuffle=False)
 
@@ -45,10 +45,11 @@ def train_mlp(config: dict, data: dict) -> dict:
     )
     criterion = nn.CrossEntropyLoss()
 
-    best_val_auroc = 0.0
+    best_val_auroc    = 0.0
+    best_val_accuracy = 0.0
     epochs_without_improvement = 0
 
-    for epoch in range(MAX_EPOCHS):
+    for _ in range(MAX_EPOCHS):
         # Training
         model.train()
         for X_batch, y_batch in train_loader:
@@ -115,7 +116,7 @@ def eval_test_mlp(config: dict, data: dict) -> float:
     Early Stopping basiert auf dem Validierungsset; das beste Modell wird
     am Ende auf dem Testset ausgewertet.
     """
-    batch_size = config["batch_size"]
+    batch_size = 2 ** int(config["batch_size_exp"])
     train_loader = _make_loader(data["X_train"], data["y_train"], batch_size, shuffle=True)
     val_loader   = _make_loader(data["X_val"],   data["y_val"],   batch_size, shuffle=False)
     test_loader  = _make_loader(data["X_test"],  data["y_test"],  batch_size, shuffle=False)
@@ -141,7 +142,7 @@ def eval_test_mlp(config: dict, data: dict) -> float:
     best_state     = None
     epochs_without_improvement = 0
 
-    for epoch in range(MAX_EPOCHS):
+    for _ in range(MAX_EPOCHS):
         model.train()
         for X_batch, y_batch in train_loader:
             optimizer.zero_grad()

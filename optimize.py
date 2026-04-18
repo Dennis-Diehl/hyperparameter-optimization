@@ -1,19 +1,14 @@
-"""Hyperparameter-Optimierung: Bayesian Search (TPE) und ACRS."""
+"""Hyperparameter-Optimierung: Bayesian Search (TPE), Random Search, CMA-ES und ACRS."""
 
-import os
 import numpy as np
-import ray
-from ray import tune
-from ray.tune.search.optuna import OptunaSearch
-from ray.tune.search.basic_variant import BasicVariantGenerator
+import optuna
 
 from config import (N_TRIALS_MLP, N_TRIALS_RF, ACRS_R, ACRS_L, ACRS_ALPHA,
-                    MLP_SEARCH_SPACE, RF_SEARCH_SPACE,
-                    MLP_SEARCH_SPACE_ACRS, RF_SEARCH_SPACE_ACRS)
+                    MLP_SEARCH_SPACE, RF_SEARCH_SPACE)
 from train import train_mlp, train_rf
 
-# Projektverzeichnis für Ray-Worker sichtbar machen
-_PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
+# Optuna-Logs auf Warnungen reduzieren (Trial-Fortschritt nicht ausgeben)
+optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
 def _budget(model_type: str) -> int:
@@ -21,16 +16,121 @@ def _budget(model_type: str) -> int:
     return N_TRIALS_MLP if model_type == "mlp" else N_TRIALS_RF
 
 
-def _sample(hp: dict, rng) -> float | int | str:
-    """Sampelt einen zufälligen Wert aus einem HP-Eintrag des ACRS-Suchraums."""
-    if hp["type"] == "float":
-        return rng.uniform(hp["low"], hp["high"])
-    elif hp["type"] == "log":
-        return float(np.exp(rng.uniform(np.log(hp["low"]), np.log(hp["high"]))))
-    elif hp["type"] == "int":
-        return int(rng.integers(hp["low"], hp["high"] + 1))
-    elif hp["type"] == "categorical":
-        return hp["choices"][rng.integers(len(hp["choices"]))]
+def _suggest_mlp(trial) -> dict:
+    """Schlägt eine MLP-Konfiguration via Optuna-Trial vor."""
+    return {
+        "learning_rate":  trial.suggest_float("learning_rate", 1e-5, 1e-1, log=True),
+        "batch_size_exp": trial.suggest_int("batch_size_exp", 4, 7),
+        "hidden_dim":     trial.suggest_int("hidden_dim", 32, 256),
+        "dropout":        trial.suggest_float("dropout", 0.0, 0.5),
+        "num_layers":     trial.suggest_categorical("num_layers", [1, 2, 3]),
+        "optimizer_name": trial.suggest_categorical("optimizer_name", ["adam", "sgd", "adamw"]),
+        "weight_decay":   trial.suggest_float("weight_decay", 1e-6, 1e-2, log=True),
+        "activation":     trial.suggest_categorical("activation", ["relu", "tanh"]),
+    }
+
+
+def _suggest_rf(trial) -> dict:
+    """Schlägt eine RF-Konfiguration via Optuna-Trial vor."""
+    return {
+        "n_estimators":      trial.suggest_int("n_estimators", 50, 500),
+        "max_depth":         trial.suggest_int("max_depth", 3, 30),
+        "min_samples_split": trial.suggest_int("min_samples_split", 2, 20),
+        "max_features":      trial.suggest_categorical("max_features", ["sqrt", "log2"]),
+        "min_samples_leaf":  trial.suggest_int("min_samples_leaf", 1, 10),
+        "criterion":         trial.suggest_categorical("criterion", ["gini", "entropy"]),
+        "max_samples":       trial.suggest_float("max_samples", 0.5, 1.0),
+    }
+
+
+def _run_optuna_study(data: dict, model_type: str, sampler) -> tuple:
+    """Führt eine HPO-Optimierung mit dem gegebenen Sampler durch und gibt Konfiguration, AUROC und Trial-History zurück."""
+    suggest_fn = _suggest_mlp if model_type == "mlp" else _suggest_rf
+    train_fn   = train_mlp    if model_type == "mlp" else train_rf
+
+    # Black-Box-Objective-Funktion für Optuna: nimmt eine Konfiguration, trainiert das Modell und gibt die Val-AUROC zurück
+    def objective(trial):
+        # Optuna schlägt eine Konfiguration vor (abhängig vom Sampler)
+        config = suggest_fn(trial)
+        result = train_fn(config, data)
+        # Zusätzliche Metriken am Trial speichern (Val-Accuracy, Trainingszeit) für spätere Auswertung
+        trial.set_user_attr("val_accuracy", result["val_accuracy"])
+        trial.set_user_attr("train_time",   result["train_time"])
+        return result["val_auroc"]
+
+    # Sampler bestimmt die Such-Strategie (TPE, Random, CMA-ES)
+    study = optuna.create_study(direction="maximize", sampler=sampler)
+    study.optimize(objective, n_trials=_budget(model_type))
+
+    # Trial-History für spätere Auswertung aufbauen
+    trial_history = [
+        {
+            "trial_nr":     t.number + 1,
+            "val_auroc":    t.value,
+            "val_accuracy": t.user_attrs["val_accuracy"],
+            "train_time":   t.user_attrs["train_time"],
+            "config":       t.params,
+        }
+        for t in study.trials
+    ]
+
+    return study.best_params, study.best_value, trial_history
+
+
+def bayesian_search(data: dict, model_type: str, seed: int) -> tuple:
+    """Bayesian Optimization via TPE (Optuna).
+
+    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
+    """
+    sampler = optuna.samplers.TPESampler(seed=seed)
+    return _run_optuna_study(data, model_type, sampler)
+
+
+def random_search(data: dict, model_type: str, seed: int) -> tuple:
+    """Random Search via Optuna.
+
+    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
+    """
+    sampler = optuna.samplers.RandomSampler(seed=seed)
+    return _run_optuna_study(data, model_type, sampler)
+
+
+def cmaes_search(data: dict, model_type: str, seed: int) -> tuple:
+    """CMA-ES via Optuna.
+
+    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
+    """
+    sampler = optuna.samplers.CmaEsSampler(seed=seed)
+    return _run_optuna_study(data, model_type, sampler)
+
+
+def _sample(hp: dict, rng, best_val=None) -> float | int | str:
+    """Sampelt einen zufälligen Wert aus einem HP-Eintrag des ACRS-Suchraums.
+
+    Wenn best_val übergeben wird, wird Normal-Sampling um den Bestwert verwendet.
+    Kategoriale HPs werden immer uniform gesampelt.
+    """
+    if best_val is None or hp["type"] == "categorical":
+        # uniform
+        if hp["type"] == "float":
+            return rng.uniform(hp["low"], hp["high"])
+        elif hp["type"] == "log":
+            return float(np.exp(rng.uniform(np.log(hp["low"]), np.log(hp["high"]))))
+        elif hp["type"] == "int":
+            return int(rng.integers(hp["low"], hp["high"] + 1))
+        elif hp["type"] == "categorical":
+            return hp["choices"][rng.integers(len(hp["choices"]))]
+    else:
+        # Normal-Sampling um best_val
+        if hp["type"] == "float":
+            std = (hp["high"] - hp["low"]) / 4
+            return float(np.clip(rng.normal(best_val, std), hp["low"], hp["high"]))
+        elif hp["type"] == "log":
+            std = (np.log(hp["high"]) - np.log(hp["low"])) / 4
+            return float(np.exp(np.clip(rng.normal(np.log(best_val), std), np.log(hp["low"]), np.log(hp["high"]))))
+        elif hp["type"] == "int":
+            std = (hp["high"] - hp["low"]) / 4
+            return int(np.clip(np.round(rng.normal(best_val, std)), hp["low"], hp["high"]))
 
 
 def _shrink(hp: dict, best_val, alpha: float) -> dict:
@@ -61,164 +161,17 @@ def _shrink(hp: dict, best_val, alpha: float) -> dict:
 
 def _priority_order(n: int, weights: np.ndarray, rng) -> np.ndarray:
     """Gibt eine gewichtete zufällige Reihenfolge der HP-Indizes zurück."""
-    keys = rng.random(n) / (weights + 1e-10) # Teilen durch 0 vermeiden
+    keys = rng.random(n) / (weights + 1e-10)
     return np.argsort(keys)
 
 
-def bayesian_search(data: dict, model_type: str, seed: int) -> dict:
-    """Bayesian Optimization via TPE (Optuna) mit Ray Tune.
-    
-    Gibt die beste gefundene Konfiguration und den besten AUROC zurück.
-    """
-    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True, log_to_driver=False)
-
-    search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
-    train_fn = train_mlp if model_type == "mlp" else train_rf
-
-    def trainable(config):
-        result = train_fn(config, data)
-        tune.report({"val_auroc": result["val_auroc"], 
-                     "val_accuracy": result["val_accuracy"], 
-                     "train_time": result["train_time"]
-                     })
-
-    tuner = tune.Tuner(
-        trainable,
-        param_space=search_space,
-        tune_config=tune.TuneConfig(
-            search_alg=OptunaSearch(metric="val_auroc", mode="max", seed=seed),
-            num_samples=_budget(model_type),
-            metric="val_auroc",
-            mode="max",
-            max_concurrent_trials=1,  # sequentiell: jeder Trial konditioniert auf alle vorherigen
-            trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}"
-        ),
-        run_config=tune.RunConfig(verbose=0),
-    )
-    results = tuner.fit()
-    best_result = results.get_best_result(metric="val_auroc", mode="max")
-
-    # Trial-History aus Ray Tune extrahieren
-    df = results.get_dataframe()
-    trial_history = []
-    for i, row in df.iterrows():
-        config = {col.replace("config/", ""): row[col]
-                  for col in df.columns if col.startswith("config/")}
-        trial_history.append({
-            "trial_nr":     i + 1,
-            "val_auroc":    row["val_auroc"],
-            "val_accuracy": row["val_accuracy"],
-            "train_time":   row["train_time"],
-            "config":       config,
-        })
-
-    return best_result.config, best_result.metrics["val_auroc"], trial_history
-
-
-def random_search(data: dict, model_type: str, seed: int) -> tuple:
-    """Random Search via Ray Tune.
-
-    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
-    """
-    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True, log_to_driver=False)
-
-    search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
-    train_fn = train_mlp if model_type == "mlp" else train_rf
-
-    def trainable(config):
-        result = train_fn(config, data)
-        tune.report({"val_auroc": result["val_auroc"],
-                     "val_accuracy": result["val_accuracy"],
-                     "train_time": result["train_time"]})
-
-    tuner = tune.Tuner(
-        trainable,
-        param_space=search_space,
-        tune_config=tune.TuneConfig(
-            search_alg=BasicVariantGenerator(random_state=seed),
-            num_samples=_budget(model_type),
-            metric="val_auroc",
-            mode="max",
-            trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}",
-        ),
-        run_config=tune.RunConfig(verbose=0),
-    )
-    results = tuner.fit()
-    best_result = results.get_best_result(metric="val_auroc", mode="max")
-
-    df = results.get_dataframe()
-    trial_history = []
-    for i, row in df.iterrows():
-        config = {col.replace("config/", ""): row[col]
-                  for col in df.columns if col.startswith("config/")}
-        trial_history.append({
-            "trial_nr":     i + 1,
-            "val_auroc":    row["val_auroc"],
-            "val_accuracy": row["val_accuracy"],
-            "train_time":   row["train_time"],
-            "config":       config,
-        })
-
-    return best_result.config, best_result.metrics["val_auroc"], trial_history
-
-
-def cmaes_search(data: dict, model_type: str, seed: int) -> tuple:
-    """CMA-ES via Optuna und Ray Tune.
-
-    Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
-    """
-    ray.init(runtime_env={"working_dir": _PROJECT_DIR}, ignore_reinit_error=True, log_to_driver=False)
-
-    search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
-    train_fn = train_mlp if model_type == "mlp" else train_rf
-
-    def trainable(config):
-        result = train_fn(config, data)
-        tune.report({"val_auroc": result["val_auroc"],
-                     "val_accuracy": result["val_accuracy"],
-                     "train_time": result["train_time"]})
-
-    import optuna
-    sampler = optuna.samplers.CmaEsSampler(seed=seed)
-
-    tuner = tune.Tuner(
-        trainable,
-        param_space=search_space,
-        tune_config=tune.TuneConfig(
-            search_alg=OptunaSearch(sampler=sampler, metric="val_auroc", mode="max"),
-            num_samples=_budget(model_type),
-            metric="val_auroc",
-            mode="max",
-            max_concurrent_trials=1,
-            trial_dirname_creator=lambda trial: f"trial_{trial.trial_id}",
-        ),
-        run_config=tune.RunConfig(verbose=0),
-    )
-    results = tuner.fit()
-    best_result = results.get_best_result(metric="val_auroc", mode="max")
-
-    df = results.get_dataframe()
-    trial_history = []
-    for i, row in df.iterrows():
-        config = {col.replace("config/", ""): row[col]
-                  for col in df.columns if col.startswith("config/")}
-        trial_history.append({
-            "trial_nr":     i + 1,
-            "val_auroc":    row["val_auroc"],
-            "val_accuracy": row["val_accuracy"],
-            "train_time":   row["train_time"],
-            "config":       config,
-        })
-
-    return best_result.config, best_result.metrics["val_auroc"], trial_history
-
-
-def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
+def acrs_search(data: dict, model_type: str, seed: int, sampling: str = "uniform") -> tuple:
     """Adaptive Coordinate Random Search (ACRS).
 
+    sampling: "uniform" (standard) oder "normal" (Gauß um best_val).
     Gibt die beste Konfiguration, den besten AUROC und die Trial-History zurück.
     """
-    search_space = MLP_SEARCH_SPACE_ACRS if model_type == "mlp" else RF_SEARCH_SPACE_ACRS
+    search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
     train_fn = train_mlp if model_type == "mlp" else train_rf
     rng = np.random.default_rng(seed)
     hp_names = list(search_space.keys())
@@ -259,7 +212,8 @@ def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
             # L Kandidaten für diesen HP samplen und evaluieren
             for _ in range(ACRS_L):
                 candidate = best_config.copy()
-                candidate[hp_name] = _sample(current_ranges[hp_name], rng)
+                bv = best_config[hp_name] if sampling == "normal" else None
+                candidate[hp_name] = _sample(current_ranges[hp_name], rng, best_val=bv)
                 result = train_fn(candidate, data)
                 y = result["val_auroc"]
                 trial_nr += 1
@@ -270,7 +224,8 @@ def acrs_search(data: dict, model_type: str, seed: int) -> tuple:
                     best_config = candidate
 
             deltas[j] = best_auroc - y_before
-            current_ranges[hp_name] = _shrink(current_ranges[hp_name], best_config[hp_name], ACRS_ALPHA)
+            # Erstmal kein shrinking
+            # current_ranges[hp_name] = _shrink(current_ranges[hp_name], best_config[hp_name], ACRS_ALPHA)
 
         # Gewichte für nächste Runde aktualisieren
         total = deltas.sum()

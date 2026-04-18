@@ -1,6 +1,5 @@
 """Startet alle Experimente parallel und führt Ergebnisse zusammen."""
 
-import argparse
 import csv
 import glob
 import os
@@ -9,18 +8,7 @@ import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-from config import SEEDS, DATASETS
-
-EXPERIMENTS = [
-    ("bo",    "mlp"),
-    ("bo",    "rf"),
-    ("acrs",  "mlp"),
-    ("acrs",  "rf"),
-    ("rs",    "mlp"),
-    ("rs",    "rf"),
-    ("cmaes", "mlp"),
-    ("cmaes", "rf"),
-]
+from config import SEEDS, DATASETS, EXPERIMENTS
 MAX_WORKERS = 6
 
 _HERE       = os.path.dirname(os.path.abspath(__file__))
@@ -100,16 +88,4 @@ def run_all():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dataset",   type=str)
-    parser.add_argument("--model",     type=str)
-    parser.add_argument("--optimizer", type=str)
-    parser.add_argument("--seed",      type=int)
-    args = parser.parse_args()
-
-    if args.dataset:
-        from run_single import run_single
-        run_single(args.dataset, args.model, args.optimizer, args.seed)
-        merge_results()
-    else:
-        run_all()
+    run_all()

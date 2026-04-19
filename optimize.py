@@ -100,7 +100,7 @@ def cmaes_search(data: dict, model_type: str, seed: int) -> tuple:
 
     Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
     """
-    sampler = optuna.samplers.CmaEsSampler(seed=seed)
+    sampler = optuna.samplers.CmaEsSampler(seed=seed, warn_independent_sampling=False)
     return _run_optuna_study(data, model_type, sampler)
 
 

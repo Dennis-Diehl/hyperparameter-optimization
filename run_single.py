@@ -37,9 +37,13 @@ def _run(method: str, model_type: str, data: dict, seed: int) -> dict:
         best_config, val_auroc, trial_history = cmaes_search(data, model_type=model_type, seed=seed)
     elif method == "acrs_normal":
         best_config, val_auroc, trial_history = acrs_search(data, model_type=model_type, seed=seed, sampling="normal")
-    else:
+    elif method == "acrs_shrink":
+        best_config, val_auroc, trial_history = acrs_search(data, model_type=model_type, seed=seed, shrink=True)
+    elif method == "acrs_normal_shrink":
+        best_config, val_auroc, trial_history = acrs_search(data, model_type=model_type, seed=seed, sampling="normal", shrink=True)
+    else: # standard ACRS
         best_config, val_auroc, trial_history = acrs_search(data, model_type=model_type, seed=seed)
-
+    
     duration   = time.time() - t0
     tracker.stop()
     energy_kwh = tracker._total_energy.kWh

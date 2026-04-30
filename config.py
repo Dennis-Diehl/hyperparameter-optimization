@@ -13,7 +13,7 @@ EARLY_STOPPING_PATIENCE = 10
 # ACRS-Budget
 ACRS_R     = 3
 ACRS_L     = 5
-ACRS_ALPHA = 1.0
+ACRS_ALPHA = 0.5
 
 # Suchraum MLP
 MLP_SEARCH_SPACE = {
@@ -46,6 +46,10 @@ EXPERIMENTS = [
     ("acrs",        "rf"),
     ("acrs_normal", "mlp"),
     ("acrs_normal", "rf"),
+    ("acrs_shrink", "mlp"),
+    ("acrs_shrink", "rf"),
+    ("acrs_normal_shrink", "mlp"),
+    ("acrs_normal_shrink", "rf"),
     ("rs",          "mlp"),
     ("rs",          "rf"),
     ("cmaes",       "mlp"),

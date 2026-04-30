@@ -134,7 +134,7 @@ def _sample(hp: dict, rng, best_val=None) -> float | int | str:
 
 
 def _shrink(hp: dict, best_val, alpha: float) -> dict:
-    """Kontrahiert den Suchbereich eines HP um den aktuellen Bestwert."""
+    """Verkleinert den Suchbereich eines HP um den aktuellen Bestwert."""
     if hp["type"] == "categorical":
         return hp
 
@@ -165,10 +165,11 @@ def _priority_order(n: int, weights: np.ndarray, rng) -> np.ndarray:
     return np.argsort(keys)
 
 
-def acrs_search(data: dict, model_type: str, seed: int, sampling: str = "uniform") -> tuple:
+def acrs_search(data: dict, model_type: str, seed: int, sampling: str = "uniform", shrink: bool = False) -> tuple:
     """Adaptive Coordinate Random Search (ACRS).
 
     sampling: "uniform" (standard) oder "normal" (Gauß um best_val).
+    shrink: ob der Suchbereich verkleinert werden soll.
     Gibt die beste Konfiguration, den besten AUROC und die Trial-History zurück.
     """
     search_space = MLP_SEARCH_SPACE if model_type == "mlp" else RF_SEARCH_SPACE
@@ -224,8 +225,9 @@ def acrs_search(data: dict, model_type: str, seed: int, sampling: str = "uniform
                     best_config = candidate
 
             deltas[j] = best_auroc - y_before
-            # Erstmal kein shrinking
-            # current_ranges[hp_name] = _shrink(current_ranges[hp_name], best_config[hp_name], ACRS_ALPHA)
+            
+            if shrink:
+                current_ranges[hp_name] = _shrink(current_ranges[hp_name], best_config[hp_name], ACRS_ALPHA)
 
         # Gewichte für nächste Runde aktualisieren
         total = deltas.sum()

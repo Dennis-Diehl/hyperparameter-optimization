@@ -191,46 +191,32 @@ def plot_final_comparison(runs: pd.DataFrame, trials: pd.DataFrame):
         _save(fig, os.path.join(PLOTS_DIR, f"comparison_{metric}.png"))
 
 
-def plot_acrs_ablation(runs: pd.DataFrame, trials: pd.DataFrame):
-    """Vergleich der vier ACRS-Varianten: Boxplots gepooled über Seeds × Datensätze.
-
-    1 Zeile × 2 Spalten (MLP, RF), je eine Figure für Val und Test.
-    Jede Box fasst 10 Seeds × 5 Datasets = 50 Punkte zusammen.
+def generate_acrs_ablation_table(runs: pd.DataFrame, trials: pd.DataFrame):
+    """Erzeugt LaTeX-Tabelle: Test-AUROC (mean ± std) der vier ACRS-Varianten,
+    gepooled über alle Datasets × Seeds, getrennt nach Modell (MLP / RF).
     """
-    variants = [v for v in ACRS_VARIANTS if v in trials["optimizer"].unique()]
-    models   = sorted(trials["model"].unique())
+    variants = [v for v in ACRS_VARIANTS if v in runs["method"].unique()]
+    models   = sorted(runs["model_type"].unique())
 
-    for metric, title, source in [
-        ("val_auroc",  "Val-AUROC",  "trials"),
-        ("test_auroc", "Test-AUROC", "runs"),
-    ]:
-        fig, axes = plt.subplots(1, len(models), figsize=(6 * len(models), 5))
+    os.makedirs(LATEX_DIR, exist_ok=True)
 
-        for col, model in enumerate(models):
-            ax = axes[col]
+    col_spec = "l" + "c" * len(variants)
+    headers  = " & ".join([""] + [LABELS[v] for v in variants])
 
-            if source == "trials":
-                df   = trials[(trials["model"] == model) & (trials["optimizer"].isin(variants))]
-                best = df.groupby(["optimizer", "seed", "dataset"])["val_auroc"].max().reset_index()
-                data = [best[best["optimizer"] == v]["val_auroc"].values for v in variants]
-            else:
-                df   = runs[(runs["model_type"] == model) & (runs["method"].isin(variants))]
-                data = [df[df["method"] == v]["test_auroc"].values for v in variants]
+    with open(os.path.join(LATEX_DIR, "table_acrs_ablation.tex"), "w") as f:
+        f.write(f"\\begin{{tabular}}{{{col_spec}}}\n\\toprule\n{headers} \\\\\n\\midrule\n")
+        for model in models:
+            row = [model.upper()]
+            stats    = {v: runs[(runs["method"] == v) & (runs["model_type"] == model)]["test_auroc"].agg(["mean", "std"]) for v in variants}
+            best_v   = max(variants, key=lambda v: (round(stats[v]["mean"], 3), -round(stats[v]["std"], 3)))
+            for v in variants:
+                vals = runs[(runs["method"] == v) & (runs["model_type"] == model)]["test_auroc"]
+                cell = f"{vals.mean():.3f} $\\pm$ {vals.std():.3f}"
+                row.append(f"\\textbf{{{cell}}}" if v == best_v else cell)
+            f.write(" & ".join(row) + " \\\\\n")
+        f.write("\\bottomrule\n\\end{tabular}\n")
 
-            labels = [LABELS[v] for v in variants]
-            bp = ax.boxplot(data, tick_labels=labels, patch_artist=True)
-            for patch, v in zip(bp["boxes"], variants):
-                patch.set_facecolor(PALETTE[v])
-                patch.set_alpha(0.7)
-
-            ax.set_title(model.upper())
-            ax.set_ylabel(title)
-            ax.set_xticklabels(labels, rotation=15, ha="right")
-            ax.grid(True, alpha=0.3, axis="y")
-
-        fig.suptitle(f"ACRS Ablation — {title}", fontsize=14)
-        fig.tight_layout()
-        _save(fig, os.path.join(PLOTS_DIR, f"acrs_ablation_{metric}.png"))
+    print(f"[report] Saved: {os.path.join(LATEX_DIR, 'table_acrs_ablation.tex')}")
 
 
 def plot_training_time(runs: pd.DataFrame):
@@ -314,14 +300,11 @@ def plot_energy(runs: pd.DataFrame):
 
 
 def generate_latex_tables(runs: pd.DataFrame):
-    """Erzeugt drei LaTeX-Tabellen in LATEX_DIR.
+    """Erzeugt zwei LaTeX-Tabellen in LATEX_DIR.
 
-    - table_main_results.tex  : Test-AUROC (Mittelwert ± Std) pro Verfahren × Modell × Dataset
-    - table_runtime.tex       : Laufzeit in Sekunden (Mittelwert ± Std)
-    - table_significance.tex  : Wilcoxon p-Werte paarweise zwischen Verfahren
+    - table_main_results.tex : Test-AUROC (Mittelwert ± Std) pro Verfahren × Modell × Dataset
+    - table_runtime.tex      : Laufzeit in Sekunden (Mittelwert ± Std)
     """
-    from scipy.stats import wilcoxon
-
     os.makedirs(LATEX_DIR, exist_ok=True)
 
     runs = runs[~runs["method"].isin(_ACRS_OTHERS)]
@@ -337,7 +320,7 @@ def generate_latex_tables(runs: pd.DataFrame):
 
     # Tabelle 1: Test-AUROC (Bestwert pro Zeile fettgedruckt)
     with open(os.path.join(LATEX_DIR, "table_main_results.tex"), "w") as f:
-        col_spec = "ll" + "r" * len(optimizers)
+        col_spec = "ll" + "c" * len(optimizers)
         headers  = " & ".join(["Dataset", "Modell"] + [LABELS[o] for o in optimizers])
         f.write(f"\\begin{{tabular}}{{{col_spec}}}\n\\toprule\n{headers} \\\\\n\\midrule\n")
         for dataset in datasets:
@@ -358,7 +341,7 @@ def generate_latex_tables(runs: pd.DataFrame):
 
     # Tabelle 2: Laufzeit
     with open(os.path.join(LATEX_DIR, "table_runtime.tex"), "w") as f:
-        col_spec = "ll" + "r" * len(optimizers)
+        col_spec = "ll" + "c" * len(optimizers)
         headers  = " & ".join(["Dataset", "Modell"] + [LABELS[o] for o in optimizers])
         f.write(f"\\begin{{tabular}}{{{col_spec}}}\n\\toprule\n{headers} \\\\\n\\midrule\n")
         for dataset in datasets:
@@ -377,42 +360,13 @@ def generate_latex_tables(runs: pd.DataFrame):
         f.write("\\bottomrule\n\\end{tabular}\n")
     print(f"[report] Saved: {os.path.join(LATEX_DIR, 'table_runtime.tex')}")
 
-    # Tabelle 3: Wilcoxon-Signifikanz (paarweise, getrennt pro Modell)
-    with open(os.path.join(LATEX_DIR, "table_significance.tex"), "w") as f:
-        for model in models:
-            f.write(f"\\textbf{{{model.upper()}}}\\\\\n")
-            col_spec = "l" + "r" * len(optimizers)
-            headers  = " & ".join([""] + [LABELS[o] for o in optimizers])
-            f.write(f"\\begin{{tabular}}{{{col_spec}}}\n\\toprule\n{headers} \\\\\n\\midrule\n")
-            df_m = runs[runs["model_type"] == model]
-            for i, o1 in enumerate(optimizers):
-                row = [LABELS[o1]]
-                for j, o2 in enumerate(optimizers):
-                    if j == i:
-                        row.append("—")
-                    elif j < i:
-                        # unteres Dreieck leer lassen
-                        row.append("")
-                    else:
-                        # gepoolte Paare: gleicher seed × gleicher dataset
-                        merged = df_m[df_m["method"] == o1][["seed", "dataset", "test_auroc"]].merge(
-                            df_m[df_m["method"] == o2][["seed", "dataset", "test_auroc"]],
-                            on=["seed", "dataset"], suffixes=("_a", "_b")
-                        )
-                        _, p = wilcoxon(merged["test_auroc_a"], merged["test_auroc_b"])
-                        mark = "*" if p < 0.05 else ""
-                        row.append(f"{p:.3f}{mark}")
-                f.write(" & ".join(row) + " \\\\\n")
-            f.write("\\bottomrule\n\\end{tabular}\n\\bigskip\n\n")
-    print(f"[report] Saved: {os.path.join(LATEX_DIR, 'table_significance.tex')}")
-
 
 def main():
     runs, trials = _load_data()
     plot_convergence(trials)
     plot_convergence_time(trials)
     plot_final_comparison(runs, trials)
-    plot_acrs_ablation(runs, trials)
+    generate_acrs_ablation_table(runs, trials)
     plot_training_time(runs)
     plot_energy(runs)
     generate_latex_tables(runs)

@@ -7,6 +7,7 @@ import os
 import time
 
 from codecarbon import EmissionsTracker
+import torch
 
 from data import load_data
 from optimize import bayesian_search, acrs_search, random_search, cmaes_search
@@ -51,7 +52,7 @@ def _run(method: str, model_type: str, data: dict, seed: int) -> dict:
     if model_type == "mlp":
         test_result = eval_test_mlp(best_config, data)
     else:
-        test_result = eval_test_rf(best_config, data)
+        test_result = eval_test_rf(best_config, data, seed=seed)
     test_auroc    = test_result["test_auroc"]
     test_accuracy = test_result["test_accuracy"]
 
@@ -82,6 +83,7 @@ def run_single(dataset: str, model_type: str, method: str, seed: int):
         print(f"  Übersprungen (bereits vorhanden): {prefix}")
         return
 
+    torch.manual_seed(seed)
     data   = load_data(seed=seed, dataset=dataset)
     print(f"  {method.upper()} {model_type.upper()} | {dataset} | seed={seed} ...", end=" ", flush=True)
 

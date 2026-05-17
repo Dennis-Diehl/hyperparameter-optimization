@@ -43,7 +43,7 @@ def _suggest_rf(trial) -> dict:
     }
 
 
-def _run_optuna_study(data: dict, model_type: str, sampler) -> tuple:
+def _run_optuna_study(data: dict, model_type: str, sampler, seed: int = None) -> tuple:
     """Führt eine HPO-Optimierung mit dem gegebenen Sampler durch und gibt Konfiguration, AUROC und Trial-History zurück."""
     suggest_fn = _suggest_mlp if model_type == "mlp" else _suggest_rf
     train_fn   = train_mlp    if model_type == "mlp" else train_rf
@@ -52,7 +52,7 @@ def _run_optuna_study(data: dict, model_type: str, sampler) -> tuple:
     def objective(trial):
         # Optuna schlägt eine Konfiguration vor (abhängig vom Sampler)
         config = suggest_fn(trial)
-        result = train_fn(config, data)
+        result = train_fn(config, data, seed) if model_type == "rf" else train_fn(config, data)
         # Zusätzliche Metriken am Trial speichern (Val-Accuracy, Trainingszeit) für spätere Auswertung
         trial.set_user_attr("val_accuracy", result["val_accuracy"])
         trial.set_user_attr("train_time",   result["train_time"])
@@ -83,7 +83,7 @@ def bayesian_search(data: dict, model_type: str, seed: int) -> tuple:
     Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
     """
     sampler = optuna.samplers.TPESampler(seed=seed)
-    return _run_optuna_study(data, model_type, sampler)
+    return _run_optuna_study(data, model_type, sampler, seed=seed)
 
 
 def random_search(data: dict, model_type: str, seed: int) -> tuple:
@@ -92,7 +92,7 @@ def random_search(data: dict, model_type: str, seed: int) -> tuple:
     Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
     """
     sampler = optuna.samplers.RandomSampler(seed=seed)
-    return _run_optuna_study(data, model_type, sampler)
+    return _run_optuna_study(data, model_type, sampler, seed=seed)
 
 
 def cmaes_search(data: dict, model_type: str, seed: int) -> tuple:
@@ -101,7 +101,7 @@ def cmaes_search(data: dict, model_type: str, seed: int) -> tuple:
     Gibt die beste gefundene Konfiguration, den besten AUROC und die Trial-History zurück.
     """
     sampler = optuna.samplers.CmaEsSampler(seed=seed, warn_independent_sampling=False)
-    return _run_optuna_study(data, model_type, sampler)
+    return _run_optuna_study(data, model_type, sampler, seed=seed)
 
 
 def _sample(hp: dict, rng, best_val=None) -> float | int | str:
@@ -215,7 +215,7 @@ def acrs_search(data: dict, model_type: str, seed: int, sampling: str = "uniform
                 candidate = best_config.copy()
                 bv = best_config[hp_name] if sampling == "normal" else None
                 candidate[hp_name] = _sample(current_ranges[hp_name], rng, best_val=bv)
-                result = train_fn(candidate, data)
+                result = train_fn(candidate, data, seed) if model_type == "rf" else train_fn(candidate, data)
                 y = result["val_auroc"]
                 trial_nr += 1
                 _log_trial(candidate, result)

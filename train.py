@@ -13,6 +13,11 @@ from config import MAX_EPOCHS, EARLY_STOPPING_PATIENCE
 
 
 def _make_loader(X, y, batch_size: int, shuffle: bool) -> DataLoader:
+    """Gibt ein DataLoader-Objekt zurück.
+    Beim Iterieren über den DataLoader gibt es Tuples (X_batch, y_batch) aus:
+    X_batch: Tensor (batch_size, input_dim) mit dtype float32
+    y_batch: Tensor (batch_size,) mit dtype long
+    """
     ds = TensorDataset(
         torch.tensor(X, dtype=torch.float32),
         torch.tensor(y, dtype=torch.long),
@@ -88,7 +93,7 @@ def train_mlp(config: dict, data: dict) -> dict:
     }
 
 
-def train_rf(config: dict, data: dict) -> dict:
+def train_rf(config: dict, data: dict, seed: int = None) -> dict:
     """Trainiert einen Random Forest und gibt AUROC, Accuracy und Trainingszeit zurück."""
     t0 = time.time()
     model = RFModel(
@@ -99,6 +104,7 @@ def train_rf(config: dict, data: dict) -> dict:
         min_samples_leaf=config["min_samples_leaf"],
         criterion=config["criterion"],
         max_samples=config["max_samples"],
+        random_state=seed,
     )
     model.model.fit(data["X_train"], data["y_train"])
     probs = model.model.predict_proba(data["X_val"])[:, 1]
@@ -183,7 +189,7 @@ def eval_test_mlp(config: dict, data: dict) -> float:
     }
 
 
-def eval_test_rf(config: dict, data: dict) -> dict:
+def eval_test_rf(config: dict, data: dict, seed: int = None) -> dict:
     """Trainiert RF mit gegebener Konfiguration und gibt Test-AUROC und Test-Accuracy zurück."""
     model = RFModel(
         n_estimators=config["n_estimators"],
@@ -193,6 +199,7 @@ def eval_test_rf(config: dict, data: dict) -> dict:
         min_samples_leaf=config["min_samples_leaf"],
         criterion=config["criterion"],
         max_samples=config["max_samples"],
+        random_state=seed,
     )
     model.model.fit(data["X_train"], data["y_train"])
     probs = model.model.predict_proba(data["X_test"])[:, 1]

@@ -36,15 +36,16 @@ class MLP(nn.Module):
 class RFModel:
     """Wrapper um RandomForestClassifier für einheitliche Schnittstelle."""
 
-    def __init__(self, 
-                 n_estimators: int, 
-                 max_depth: int, 
+    def __init__(self,
+                 n_estimators: int,
+                 max_depth: int,
                  min_samples_split: int,
-                 max_features: str, 
-                 min_samples_leaf: int, 
+                 max_features: str,
+                 min_samples_leaf: int,
                  criterion: str,
-                 max_samples: float):
-        
+                 max_samples: float,
+                 random_state: int = None):
+
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -54,4 +55,5 @@ class RFModel:
             criterion=criterion,
             max_samples=max_samples,
             n_jobs=-1,
+            random_state=random_state,
         )

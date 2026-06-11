@@ -1,21 +1,20 @@
 \begin{tabular}{llcccc}
 \toprule
-Dataset & Modell & ACRS (Shrink) & BO (TPE) & CMA-ES & Random Search \\
+Dataset & Modell & ACRS & BO (TPE) & CMA-ES & RS \\
 \midrule
-adult\_income & MLP & 0.888 $\pm$ 0.006 & \textbf{0.890 $\pm$ 0.007} & 0.889 $\pm$ 0.006 & 0.889 $\pm$ 0.010 \\
-adult\_income & RF & 0.901 $\pm$ 0.008 & 0.901 $\pm$ 0.008 & 0.901 $\pm$ 0.009 & \textbf{0.902 $\pm$ 0.009} \\
+Adult Income & MLP & 0.887 $\pm$ 0.005 & 0.888 $\pm$ 0.007 & 0.890 $\pm$ 0.007 & \textbf{0.891 $\pm$ 0.006} \\
+Adult Income & RF & \textbf{0.902 $\pm$ 0.008} & 0.901 $\pm$ 0.008 & \textbf{0.902 $\pm$ 0.008} & 0.902 $\pm$ 0.009 \\
 \midrule
-bank\_marketing & MLP & \textbf{0.897 $\pm$ 0.016} & 0.893 $\pm$ 0.010 & 0.893 $\pm$ 0.012 & 0.896 $\pm$ 0.009 \\
-bank\_marketing & RF & 0.913 $\pm$ 0.014 & 0.913 $\pm$ 0.014 & 0.912 $\pm$ 0.015 & \textbf{0.914 $\pm$ 0.013} \\
+Bank Marketing & MLP & \textbf{0.899 $\pm$ 0.014} & 0.896 $\pm$ 0.015 & 0.895 $\pm$ 0.006 & 0.895 $\pm$ 0.016 \\
+Bank Marketing & RF & 0.913 $\pm$ 0.013 & 0.914 $\pm$ 0.014 & 0.913 $\pm$ 0.013 & \textbf{0.914 $\pm$ 0.013} \\
 \midrule
-breast\_cancer & MLP & \textbf{0.996 $\pm$ 0.004} & 0.993 $\pm$ 0.007 & 0.989 $\pm$ 0.016 & 0.994 $\pm$ 0.007 \\
-breast\_cancer & RF & 0.992 $\pm$ 0.004 & 0.990 $\pm$ 0.005 & \textbf{0.992 $\pm$ 0.004} & 0.991 $\pm$ 0.006 \\
+Breast Cancer & MLP & 0.995 $\pm$ 0.004 & \textbf{0.996 $\pm$ 0.004} & 0.994 $\pm$ 0.007 & 0.992 $\pm$ 0.008 \\
+Breast Cancer & RF & \textbf{0.991 $\pm$ 0.005} & \textbf{0.991 $\pm$ 0.005} & \textbf{0.991 $\pm$ 0.005} & 0.990 $\pm$ 0.006 \\
 \midrule
-diabetes & MLP & \textbf{0.823 $\pm$ 0.027} & 0.819 $\pm$ 0.024 & 0.822 $\pm$ 0.023 & 0.821 $\pm$ 0.027 \\
-diabetes & RF & \textbf{0.827 $\pm$ 0.023} & 0.826 $\pm$ 0.021 & 0.827 $\pm$ 0.023 & 0.823 $\pm$ 0.019 \\
+Diabetes & MLP & \textbf{0.825 $\pm$ 0.027} & 0.824 $\pm$ 0.029 & 0.822 $\pm$ 0.025 & 0.814 $\pm$ 0.032 \\
+Diabetes & RF & 0.827 $\pm$ 0.022 & 0.826 $\pm$ 0.019 & \textbf{0.828 $\pm$ 0.023} & 0.824 $\pm$ 0.018 \\
 \midrule
-german\_credit & MLP & \textbf{0.760 $\pm$ 0.028} & 0.749 $\pm$ 0.025 & 0.755 $\pm$ 0.029 & 0.746 $\pm$ 0.028 \\
-german\_credit & RF & 0.776 $\pm$ 0.030 & \textbf{0.780 $\pm$ 0.025} & 0.775 $\pm$ 0.024 & 0.775 $\pm$ 0.026 \\
-\midrule
+German Credit & MLP & \textbf{0.764 $\pm$ 0.037} & 0.759 $\pm$ 0.035 & 0.754 $\pm$ 0.037 & 0.757 $\pm$ 0.022 \\
+German Credit & RF & 0.775 $\pm$ 0.027 & 0.775 $\pm$ 0.024 & 0.773 $\pm$ 0.030 & \textbf{0.776 $\pm$ 0.029} \\
 \bottomrule
 \end{tabular}

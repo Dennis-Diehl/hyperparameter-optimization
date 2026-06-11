@@ -15,6 +15,7 @@ __pycache__/
 
 # Project
 docs/
+results/runs/
 
 # Thesis
 Thesis-Ausarbeitung/**

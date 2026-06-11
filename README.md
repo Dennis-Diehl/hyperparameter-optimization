@@ -18,14 +18,13 @@ Hyperparameter optimization (HPO) is essential for the predictive performance of
 ├── run_single.py         # Runs one combination of dataset × model × optimizer × seed
 ├── main.py               # Runs the full benchmark in parallel and merges results
 ├── plots.py              # Generates all figures and LaTeX tables from the result CSVs
-├── tests/                # Jupyter notebooks for inspecting individual modules
+├── data_cache/           # Cached datasets (.npz), downloaded from OpenML on first use
 ├── results/
 │   ├── runs.csv          # One row per run (final metrics, duration, energy)
 │   ├── trials.csv        # One row per trial (per-trial metrics and configs)
 │   ├── plots/            # Generated figures
 │   └── latex/            # Generated LaTeX tables
-├── Thesis-Ausarbeitung/  # LaTeX source of the thesis
-└── bachelor-thesis.pdf   # Compiled thesis
+└── bachelor-thesis.pdf   # Thesis
 ```
 
 ## Getting Started
@@ -44,7 +43,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-This executes all 700 runs (7 optimizers × 2 models × 5 datasets × 10 seeds) in parallel subprocesses and merges the results into `results/runs.csv` and `results/trials.csv`. Datasets are downloaded from OpenML on first use and cached locally. Note that the full benchmark takes several hours on CPU.
+This executes all 700 runs (7 optimizers × 2 models × 5 datasets × 10 seeds) in parallel subprocesses and merges the results into `results/runs.csv` and `results/trials.csv`. All datasets are included as cached `.npz` files in `data_cache/`, so no download is required. Missing datasets would be fetched from OpenML automatically. Note that the full benchmark takes several hours on CPU.
 
 ### Run a single experiment
 
